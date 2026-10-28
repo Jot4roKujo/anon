@@ -1,0 +1,62 @@
+# Build automatica su GitHub (non serve avere un Mac).
+# Avvio manuale: scheda Actions → "Build" → Run workflow.
+# Si avvia da sola anche quando pubblichi un tag di versione (es. v1.0).
+# I file pronti si scaricano dal riepilogo dell'esecuzione, sezione "Artifacts".
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon (M1/M2/M3/M4)
+            arch: arm64
+          - runner: macos-15-intel    # Mac Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build .app e .dmg
+        run: PYTHON="$(which python)" ./build_mac.sh
+      - name: Autotest dell'app compilata (Tcl/Tk, Word, PDF)
+        run: |
+          dist/Anonimizzatore.app/Contents/MacOS/Anonimizzatore --self-test
+          codesign --verify --deep --strict dist/Anonimizzatore.app && echo "firma ad-hoc valida"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anonimizzatore-macOS-${{ matrix.arch }}
+          path: dist/Anonimizzatore-macOS-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build .exe
+        run: |
+          python -m pip install -r requirements.txt pyinstaller
+          python -m PyInstaller --noconfirm --clean Anonimizzatore.spec
+      - name: Autotest dell'exe compilato (Tcl/Tk, Word, PDF)
+        shell: pwsh
+        run: |
+          # l'exe è senza console: si attende la fine e si legge il report su file
+          $p = Start-Process -FilePath dist\Anonimizzatore.exe -ArgumentList '--self-test','selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anonimizzatore-Windows
+          path: dist/Anonimizzatore.exe
+          if-no-files-found: error
